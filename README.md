@@ -20,14 +20,3 @@ TotalView-ITCH 5.0 public sample) through the pipeline, with each stage's measur
 
 Timings are from cycle-accurate RTL simulation replaying real NASDAQ data. Vivado synthesis
 and implementation run on a stand-in UltraScale+ part; KR260 board bring-up is in progress.
-
-## Publishing on GitHub Pages
-1. Create a new public repository named `hft-fpga-demo` on GitHub.
-2. Upload every file in this folder (`index.html`, `flow_data.json`, `demo.mp4`, `README.md`, `.nojekyll`).
-3. Repository **Settings → Pages**: Source = "Deploy from a branch", Branch = `main`, folder `/ (root)`, Save.
-4. After about a minute the site is live at `https://YOUR-GITHUB-USERNAME.github.io/hft-fpga-demo/`.
-5. Put that link on the resume and replace YOUR-GITHUB-USERNAME above.
-
-## Previewing locally
-`python3 -m http.server 8777` in this folder, then open http://localhost:8777/
-(opening index.html directly as a file will not load the replay data).
