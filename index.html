@@ -1,0 +1,1014 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>FPGA Tick-to-Trade</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Live replay of real NASDAQ ITCH data through a low-latency FPGA tick-to-trade pipeline (ITCH to OUCH), with per-stage nanosecond timings.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#E4E9EE; --panel:#F4F6F8; --panel2:#EBEFF3; --ink:#15202A; --muted:#5B6975; --line:#C2CCD5;
+  --node:#FFFFFF; --nodeline:#7F8E9B; --copper:#A4561F; --trace:#B7753F; --order:#6A3FA3;
+  --bid:#127A6A; --ask:#B3344A; --ok:#2C7A4B; --watch:#A86F12; --tight:#BF3326;
+  --d-phy:#DCD8E9; --d-x:#D3E1EC; --d-core:#EEE2D3; --d-host:#D8E4D8;
+  --d-phy-ink:#4E4577; --d-x-ink:#2F5673; --d-core-ink:#7A4A1F; --d-host-ink:#3C5E3C;
+  --f-display:"Chakra Petch", "Rajdhani", "Segoe UI", system-ui, sans-serif;
+  --f-body:"Barlow", "Segoe UI", system-ui, sans-serif;
+  --f-mono:"IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0D1318; --panel:#131B22; --panel2:#18222A; --ink:#DAE3EA; --muted:#8B9AA7; --line:#26323C;
+    --node:#17212A; --nodeline:#4C5D6B; --copper:#E38C4F; --trace:#9C5C2E; --order:#B38EF2;
+    --bid:#3FC4AA; --ask:#F26A80; --ok:#4FC47C; --watch:#E5A842; --tight:#F2604F;
+    --d-phy:#1B1829; --d-x:#132230; --d-core:#221A12; --d-host:#152017;
+    --d-phy-ink:#A99DE0; --d-x-ink:#86B7DA; --d-core-ink:#E0A36E; --d-host-ink:#8FC48F;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0D1318; --panel:#131B22; --panel2:#18222A; --ink:#DAE3EA; --muted:#8B9AA7; --line:#26323C;
+  --node:#17212A; --nodeline:#4C5D6B; --copper:#E38C4F; --trace:#9C5C2E; --order:#B38EF2;
+  --bid:#3FC4AA; --ask:#F26A80; --ok:#4FC47C; --watch:#E5A842; --tight:#F2604F;
+  --d-phy:#1B1829; --d-x:#132230; --d-core:#221A12; --d-host:#152017;
+  --d-phy-ink:#A99DE0; --d-x-ink:#86B7DA; --d-core-ink:#E0A36E; --d-host-ink:#8FC48F;
+  color-scheme: dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 var(--f-body);margin:0}
+.app{max-width:1560px;margin:0 auto;padding-inline:16px;padding-block:14px 28px;display:flex;flex-direction:column;gap:12px}
+.num,.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+h1,h2{font-family:var(--f-display);font-weight:600;margin:0;text-wrap:balance}
+h1{font-size:22px;letter-spacing:.02em}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted)}
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 14px}
+.brand{display:flex;flex-direction:column;gap:2px;min-width:0}
+.brand .sub{font-size:12.5px;color:var(--muted)}
+.transport{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-left:auto}
+button,select{font:500 13px var(--f-body);color:var(--ink);background:var(--panel2);border:1px solid var(--nodeline);border-radius:4px;padding:6px 10px;cursor:pointer}
+button:hover,select:hover{border-color:var(--copper)}
+button:focus-visible,select:focus-visible,input:focus-visible,.node:focus-visible{outline:2px solid var(--copper);outline-offset:2px}
+button.primary{background:var(--copper);border-color:var(--copper);color:#fff;min-width:74px}
+label.chk{display:flex;align-items:center;gap:5px;font-size:13px;color:var(--muted)}
+.clock{display:flex;gap:14px;align-items:baseline}
+.clock .t{font:500 18px var(--f-mono);font-variant-numeric:tabular-nums}
+.clock .k{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+.scrub{display:flex;align-items:center;gap:10px;width:100%}
+.scrub input{flex:1;accent-color:var(--copper)}
+.scrub .num{font-size:12px;color:var(--muted);white-space:nowrap}
+.diagram{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 12px 12px;display:flex;flex-direction:column;gap:8px}
+.dhead{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:baseline;justify-content:space-between}
+.dnote{font-size:12.5px;color:var(--muted)}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+#dia{display:block;width:100%;min-width:1060px;height:auto}
+#dia text{font-family:var(--f-body)}
+#dia .lbl{font:600 12px var(--f-display);letter-spacing:.03em;fill:var(--ink)}
+#dia .ns{font:500 10.5px var(--f-mono);fill:var(--muted)}
+#dia .reg{font:600 11px var(--f-display);letter-spacing:.14em}
+#dia .note{font:500 10.5px var(--f-body);fill:var(--muted)}
+#dia .node{cursor:pointer}
+#dia .node rect.box{fill:var(--node);stroke:var(--nodeline);stroke-width:1.2}
+#dia .node.sel rect.box{stroke:var(--copper);stroke-width:2.4}
+#dia .heat{fill:var(--copper)}
+#dia .trace{fill:none;stroke:var(--trace);stroke-width:2.2;stroke-linejoin:round;opacity:.75}
+#dia .trace.tx{stroke:var(--order);opacity:.55}
+#dia .dash{fill:none;stroke:var(--muted);stroke-width:1.3;stroke-dasharray:5 4}
+#dia .cdc{stroke:var(--ink);stroke-width:1.4;stroke-dasharray:2 5;opacity:.55}
+.info{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:13px;background:var(--panel2);border-radius:4px;padding:8px 12px}
+.info b{font-family:var(--f-display);font-weight:600}
+.info .desc{grid-column:1 / -1;color:var(--muted)}
+.grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr) minmax(0,1.1fr);gap:12px}
+@media (max-width:1150px){.grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.grid .log{grid-column:1 / -1}}
+@media (max-width:720px){.grid{grid-template-columns:minmax(0,1fr)}.transport{margin-left:0}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.phead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.ladder{display:grid;grid-template-columns:1fr;font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-size:13px}
+.row{position:relative;display:grid;grid-template-columns:1fr 1fr;padding:2px 8px;border-radius:2px}
+.row .szbar{position:absolute;top:1px;bottom:1px;right:0;border-radius:2px;opacity:.22}
+.row.ask .szbar{background:var(--ask)} .row.bid .szbar{background:var(--bid)}
+.row.ask .px{color:var(--ask)} .row.bid .px{color:var(--bid)}
+.row .sz{text-align:right;position:relative}
+.row .px{position:relative}
+.row.best{font-weight:500}
+.row.flash{animation:flash .6s ease-out}
+@keyframes flash{from{background:color-mix(in srgb,var(--copper) 45%,transparent)}to{background:transparent}}
+.spread{display:flex;justify-content:space-between;padding:5px 8px;margin:3px 0;border-block:1px solid var(--line);font-size:12px;color:var(--muted)}
+.spread b{color:var(--ink);font-weight:500}
+.lastmsg{font:500 12.5px var(--f-mono);color:var(--muted);min-height:1.5em}
+.counters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.ctr{background:var(--panel2);border-radius:4px;padding:6px 8px}
+.ctr .k{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.ctr .v{font:500 15px var(--f-mono);font-variant-numeric:tabular-nums}
+.ctr .c{font:12px var(--f-mono);color:var(--muted)}
+.meter{display:flex;flex-direction:column;gap:3px}
+.meter .top{display:flex;justify-content:space-between;gap:8px;font-size:13px}
+.meter .top .num{font-size:12.5px}
+.track{position:relative;height:10px;background:var(--panel2);border:1px solid var(--line);border-radius:2px;overflow:hidden}
+.fill{position:absolute;left:0;top:0;bottom:0;background:var(--ok);transition:width .12s linear}
+.mark{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink);opacity:.55}
+.peakmark{position:absolute;top:0;bottom:0;width:2px;background:var(--copper)}
+.meter .foot{font-size:11.5px;color:var(--muted)}
+.chokes{display:flex;flex-direction:column;gap:9px}
+.choke{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;padding:7px 9px;border-radius:4px;background:var(--panel2);cursor:pointer;border-left:4px solid var(--ok)}
+.choke.watch{border-left-color:var(--watch)} .choke.tight{border-left-color:var(--tight)}
+.choke .nm{font-weight:600;font-size:13.5px}
+.pill{font:600 10.5px var(--f-display);letter-spacing:.1em;text-transform:uppercase;padding:1px 7px;border-radius:9px;color:#fff;background:var(--ok);justify-self:end;align-self:center}
+.pill.watch{background:var(--watch)} .pill.tight{background:var(--tight)}
+.choke .val{grid-column:1 / -1;font:12.5px var(--f-mono);font-variant-numeric:tabular-nums}
+.choke .nt{grid-column:1 / -1;font-size:12px;color:var(--muted)}
+.choke .track{grid-column:1 / -1}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{font:600 10.5px var(--f-display);text-transform:uppercase;letter-spacing:.1em;color:var(--muted);text-align:left;padding:4px 6px;border-bottom:1px solid var(--line)}
+td{padding:3px 6px;border-bottom:1px solid var(--line);font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+td.r,th.r{text-align:right}
+.tbl{max-height:230px;overflow:auto}
+.sB{color:var(--bid);font-weight:500} .sS{color:var(--ask);font-weight:500} .sT{color:var(--ask);font-weight:600}
+.vpass{color:var(--ok)} .vrej{color:var(--tight)}
+tr.new td{animation:flash .9s ease-out}
+.lat{display:flex;height:22px;border-radius:3px;overflow:hidden;border:1px solid var(--line)}
+.lat div{display:flex;align-items:center;justify-content:center;font:500 10.5px var(--f-mono);color:#fff;white-space:nowrap;overflow:hidden;min-width:0}
+.latlegend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--muted)}
+.state{padding:40px 16px;text-align:center;color:var(--muted);font-size:15px}
+.state.err{color:var(--tight)}
+.empty{color:var(--muted);font-size:13px;padding:6px 2px}
+.legend{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+.tip{position:fixed;z-index:20;max-width:360px;background:var(--panel);color:var(--ink);border:1px solid var(--nodeline);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:10px 12px;font-size:12.5px;line-height:1.4;pointer-events:none;display:flex;flex-direction:column;gap:6px}
+/* an author display: rule (e.g. .tip's flex) beats the browser's own [hidden] rule,
+   so hidden elements must be forced off explicitly */
+[hidden]{display:none!important}
+/* diagram annotations are labels: they must not swallow the pointer from the block under them */
+svg text.note{pointer-events:none}
+.tip .th{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.tip .th b{font:600 14px var(--f-display)}
+.tip .mod{font:11.5px var(--f-mono);color:var(--muted)}
+.tip h3,.info h3{margin:2px 0 0;font:600 10.5px var(--f-display);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.tip ul,.info ul{margin:0;padding-left:16px;display:flex;flex-direction:column;gap:3px}
+.tip li.r,.info li.r{color:var(--ink)}
+.tip li.r::marker,.info li.r::marker{color:var(--tight)}
+.tip li.l::marker,.info li.l::marker{color:var(--watch)}
+.tip .live{font:12px var(--f-mono);font-variant-numeric:tabular-nums;background:var(--panel2);border-radius:3px;padding:4px 6px}
+.sev{font:600 10px var(--f-display);letter-spacing:.1em;text-transform:uppercase;padding:1px 7px;border-radius:9px;color:#fff;background:var(--ok)}
+.sev.medium{background:var(--watch)} .sev.high{background:var(--tight)}
+.info .lists{grid-column:1 / -1;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px 18px}
+@media (prefers-reduced-motion: reduce){.row.flash,tr.new td{animation:none}.fill{transition:none}}
+
+/* ---- demo page additions ---- */
+.hero{display:grid;grid-template-columns:1fr auto;gap:10px 24px;align-items:end;padding:6px 2px 2px}
+.hero .who{font:600 13px var(--f-display);letter-spacing:.14em;text-transform:uppercase;color:var(--copper)}
+.hero h1.title{font-size:clamp(22px,3.2vw,34px);line-height:1.15;margin:4px 0 6px}
+.hero .lede{color:var(--muted);max-width:70ch;margin:0}
+.stats{display:flex;gap:10px;flex-wrap:wrap}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 14px;min-width:120px}
+.stat .v{font:600 22px var(--f-mono);font-variant-numeric:tabular-nums;color:var(--ink)}
+.stat .k{font-size:12px;color:var(--muted)}
+.simnote{font-size:12.5px;color:var(--muted);border-left:3px solid var(--watch);padding:4px 10px;background:var(--panel)}
+.how{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;display:grid;gap:14px}
+.how h2{font-size:20px}
+.how .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px 22px}
+.how h3{font:600 14px var(--f-display);letter-spacing:.06em;text-transform:uppercase;margin:0 0 6px;color:var(--copper)}
+.how ul{margin:0;padding-left:18px}
+.how li{margin:3px 0}
+.foot{font-size:12px;color:var(--muted);text-align:center;padding:8px}
+@media (max-width:720px){.hero{grid-template-columns:1fr}}
+</style>
+
+<div class="app" id="app">
+  <section class="hero">
+    <div>
+      <div class="who">Abhishek · FPGA / RTL design</div>
+      <h1 class="title">Low-latency FPGA tick-to-trade: NASDAQ ITCH in, OUCH orders out</h1>
+      <p class="lede">A complete trading pipeline in SystemVerilog for the Xilinx Kria KR260 (UltraScale+): 10G Ethernet, MoldUDP64 feed handling, ITCH parsing, a hardware order book, strategies, pre-trade risk and an order session over hardware TCP. Below, real NASDAQ AAPL messages replay through it. Every nanosecond figure is the stage's measured latency.</p>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="v">70 ns</div><div class="k">core tick-to-trade</div></div>
+      <div class="stat"><div class="v">678 ns</div><div class="k">wire to wire</div></div>
+      <div class="stat"><div class="v">196,608</div><div class="k">orders in the book</div></div>
+    </div>
+  </section>
+  <div class="simnote">Timings come from cycle-accurate RTL simulation of the design, replaying real NASDAQ data. Vivado synthesis and implementation are done on a stand-in UltraScale+ part; bring-up on the KR260 board is in progress. <a href="#how">How it's built ↓</a></div>
+  <header class="bar">
+    <div class="brand">
+      <h2>Live replay</h2>
+      <div class="sub" id="metaLine">Kria KR260 · one SFP+ port · loading market data…</div>
+    </div>
+    <div class="clock">
+      <div><div class="k">Market time (ET)</div><div class="t" id="clk">--:--:--.------</div></div>
+      <div><div class="k">Msgs / s</div><div class="t" id="rate">—</div></div>
+    </div>
+    <div class="transport">
+      <button id="btnBack" title="Previous message" aria-label="Previous message">◀ 1</button>
+      <button id="btnPlay" class="primary" aria-label="Play or pause">Play</button>
+      <button id="btnFwd" title="Next message" aria-label="Next message">1 ▶</button>
+      <label class="chk" for="speed">Speed
+        <select id="speed">
+          <option value="0.0005">0.0005×</option>
+          <option value="0.002">0.002×</option>
+          <option value="0.01" selected>0.01×</option>
+          <option value="0.05">0.05×</option>
+          <option value="0.25">0.25×</option>
+          <option value="1">1× real time</option>
+          <option value="5">5×</option>
+        </select>
+      </label>
+      <label class="chk" for="skipGaps"><input type="checkbox" id="skipGaps" checked> Skip quiet gaps</label>
+    </div>
+    <div class="scrub">
+      <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Replay position (message index)">
+      <span class="num" id="scrubLbl">msg 0 / 0</span>
+    </div>
+  </header>
+
+  <section class="diagram">
+    <div class="dhead">
+      <h2>System block diagram · live packet flow</h2>
+      <div class="legend">
+        <span><i style="background:var(--bid)"></i>add, buy side</span>
+        <span><i style="background:var(--ask)"></i>add, sell side</span>
+        <span><i style="background:var(--copper)"></i>execution / trade</span>
+        <span><i style="background:var(--muted)"></i>cancel / delete / other</span>
+        <span><i style="background:var(--order)"></i>order sent</span>
+        <span><i style="background:var(--tight)"></i>decision stopped by risk</span>
+      </div>
+    </div>
+    <div class="scroll"><svg id="dia" viewBox="0 0 1500 600" role="img" aria-label="Block diagram of the tick-to-trade system with animated message flow"></svg></div>
+    <div class="dnote" id="dnote">Packets are slowed for the eye; every ns figure on a block is the measured stage time. Hover a block for its limits and risks; click it to pin the details. The stripe under each block is its risk: red high, amber watch, green low.</div>
+    <div class="info" id="info"></div>
+  </section>
+
+  <section class="grid" id="grid">
+    <div class="panel book">
+      <div class="phead"><h2>Order book · what the FPGA sees</h2><span class="num dnote" id="bookSym"></span></div>
+      <div class="lastmsg" id="lastMsg"></div>
+      <div class="ladder" id="ladder"></div>
+      <div class="counters">
+        <div class="ctr"><div class="k">Live orders</div><div class="v" id="cLive">—</div><div class="c" id="cLiveCap"></div></div>
+        <div class="ctr"><div class="k">Bid levels</div><div class="v" id="cBid">—</div><div class="c" id="cLvlCap"></div></div>
+        <div class="ctr"><div class="k">Ask levels</div><div class="v" id="cAsk">—</div><div class="c" id="cLvlCap2"></div></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="phead"><h2>Choke points · live</h2></div>
+      <div id="liveMeters" class="chokes"></div>
+      <div class="phead"><h2>Choke points · measured limits</h2></div>
+      <div id="chokeList" class="chokes"></div>
+    </div>
+
+    <div class="panel log">
+      <div class="phead"><h2>Strategy decisions</h2><span class="dnote num" id="ordCount"></span>
+        <label class="chk" for="ordFilter">Show <select id="ordFilter"><option value="acc" selected>Sent (risk passed)</option><option value="rej">Risk-rejected</option><option value="all">All</option></select></label></div>
+      <div class="tbl"><table>
+        <thead><tr><th>Time</th><th>Strategy</th><th>Side</th><th class="r">Qty</th><th class="r">Price</th><th>Risk</th><th class="r">t2t</th></tr></thead>
+        <tbody id="orders"></tbody>
+      </table></div>
+      <div class="phead"><h2>Tick-to-trade latency</h2><span class="num dnote" id="t2tTot"></span></div>
+      <div class="lat" id="lat"></div>
+      <div class="latlegend" id="latLegend"></div>
+      <div class="dnote" id="latDef"></div>
+      <div class="phead"><h2>ITCH tape</h2><span class="dnote">newest first</span></div>
+      <div class="tbl"><table>
+        <thead><tr><th>Time</th><th>Type</th><th>Side</th><th class="r">Qty</th><th class="r">Price</th></tr></thead>
+        <tbody id="tape"></tbody>
+      </table></div>
+    </div>
+  </section>
+  <section class="how" id="how">
+    <h2>How it's built</h2>
+    <div class="cols">
+      <div><h3>Pipeline (SystemVerilog)</h3><ul>
+        <li>10G XGMII MAC, receive traffic filter, UDP/IPv4 receive with header checksum checking</li>
+        <li>MoldUDP64 A/B line arbitration, de-duplication and gap detection, with hardware gap re-request and a live-feed hold buffer</li>
+        <li>ITCH 5.0 parser → symbol table → order book (2-choice hash, 196,608 orders in UltraRAM, price ladders)</li>
+        <li>5 strategies (takers and market makers), pre-trade risk checks, OUCH 4.2 encoder</li>
+        <li>SoupBinTCP session over a hardware TCP client with TCP/IP checksum generation; ARP responder</li>
+      </ul></div>
+      <div><h3>Clocks &amp; implementation</h3><ul>
+        <li>3 clock domains: 156.25 MHz (10G line), 250 MHz (core), 100 MHz (host / ARM)</li>
+        <li>Custom clock-domain-crossing IP: Gray-code async FIFOs, packet FIFOs, pulse and handshake synchronisers, with scoped timing constraints</li>
+        <li>14 blocks packaged as Vivado IP-XACT IP and assembled into a validated block design</li>
+        <li>Static timing analysis in Vivado; the worst paths were pipelined with no latency added on the order path</li>
+      </ul></div>
+      <div><h3>Verification</h3><ul>
+        <li>Self-checking cocotb / Verilator testbenches against Python golden models and scapy</li>
+        <li>QuestaSim SystemVerilog testbenches with assertions</li>
+        <li>Full-day replays of real NASDAQ ITCH, bit-exact against a reference order book</li>
+        <li>Error injection: lossy feed lines, dropped packets, lost retransmissions, TCP loss</li>
+        <li>33-step automated regression</li>
+      </ul></div>
+    </div>
+  </section>
+  <div class="foot">Replay: NASDAQ TotalView-ITCH 5.0 (public sample), AAPL, 2019-10-30, first 30 s of the session. Built with SystemVerilog, cocotb, Verilator, QuestaSim and Vivado.</div>
+</div>
+
+<script>
+(() => {
+"use strict";
+const NS = "http://www.w3.org/2000/svg";
+const $ = id => document.getElementById(id);
+const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// ---------------- diagram layout (viewBox 1500 x 600) ----------------
+const REG = [
+  {id:"phy",  x:10,  y:30,  w:250, h:400, name:"GTH · 10GBASE-R PCS/PMA · SFP+", fill:"--d-phy",  ink:"--d-phy-ink"},
+  {id:"xgmii",x:265, y:30,  w:310, h:400, name:"XGMII · 156.25 MHz",             fill:"--d-x",    ink:"--d-x-ink"},
+  {id:"core", x:575, y:30,  w:915, h:400, name:"CORE · 250 MHz",                  fill:"--d-core", ink:"--d-core-ink"},
+  {id:"host", x:575, y:450, w:915, h:140, name:"HOST · Zynq UltraScale+ PS · 100 MHz", fill:"--d-host", ink:"--d-host-ink"},
+];
+const BOX = {
+  sfp_rx:[25,80,100,48], pcs_rx:[140,80,100,48], rx_filter:[285,80,100,48], mac_rx:[405,80,100,48],
+  feed_fifo:[525,80,100,48], unpack:[650,80,100,48], udp_rx:[785,80,100,48], mold:[920,80,100,48],
+  parser:[1055,80,100,48], kvs:[1190,80,100,48], book:[1325,66,160,138],
+  strategy:[1350,330,110,48], risk:[1225,330,100,48], ouch:[1090,330,100,48], session:[955,330,100,48],
+  tcp:[820,330,100,48], pack:[685,330,100,48], tx_fifo:[525,330,100,48], mac_tx:[405,330,100,48],
+  pcs_tx:[140,330,100,48], sfp_tx:[25,330,100,48], host:[850,478,420,92],
+};
+const RX_IDS = ["sfp_rx","pcs_rx","rx_filter","mac_rx","feed_fifo","unpack","udp_rx","mold","parser","kvs","book"];
+const TX_IDS = ["book","strategy","risk","ouch","session","tcp","pack","tx_fifo","mac_tx","pcs_tx","sfp_tx"];
+const center = id => { const b = BOX[id]; return [b[0] + b[2] / 2, b[1] + (id === "book" ? 50 : b[3] / 2)]; };
+
+let D = null;               // the data
+let T = null;               // Float64Array of message times (ns)
+let FIFO = null, GBPS = null, RATE = null;
+let PIPE = {};              // id -> pipeline entry
+let CHOKE_BY_STAGE = {};
+let decAt = new Map();
+let caps = {store:65536, levels:8192, fifo:32768, drain:2.0};
+let idx = 0, clock = 0, playing = false, speed = 0.01, lastFrame = 0, selNode = null;
+const heat = {}, heatEl = {}, nodeEl = {};
+const particles = []; const MAX_P = 90; let undrawn = 0;
+let paths = {};             // {rx:{pts, hops:[{a,b,dur,node}], total}, tx:{...}}
+let rejBudget = 1;
+let bookEls = null, meterEls = {}, lastBookIdx = -1;
+
+
+// ---------------- per-block limits and risks (hover / click) ----------------
+// Every line is a measured result, a test outcome or a fact from the RTL/docs.
+// sev: the block's worst open risk -- high = can stop trading or trade wrong,
+// medium = a known limit that real data gets near, low = contained by design.
+const RISK = {
+  sfp_rx:{sev:"medium",
+    limits:["One SFP+ cage carries the feed AND the order session (KR260 has one 10G port).",
+            "No second feed line: MoldUDP64 line B is idle, so there is no A/B redundancy on this board."],
+    risks:["The SOM-connector-to-cage routing comes from a third-party schematic trace; confirm against KR260 schematic XTP743.",
+           "Loss of signal (SFP LOS) takes down market data and orders together."]},
+  pcs_rx:{sev:"medium",
+    limits:["AMD 10G Ethernet PCS/PMA (10GBASE-R, 64-bit XGMII at 156.25 MHz); latency not measured here.",
+            "Not in the simulations: every test drives XGMII directly."],
+    risks:["Which quad reference clock (clk0 or clk1) pin Y6/Y5 is has not been confirmed; a wrong choice fails placement.",
+           "Needs Zynq UltraScale+ device support installed in Vivado (not installed on this VM)."]},
+  rx_filter:{sev:"low",
+    limits:["Sorts by class only: UDP to the feed path, TCP and ARP to the order path.",
+            "VLAN-tagged frames and IPv6 are dropped.",
+            "A frame shorter than 3 beats is marked bad."],
+    risks:["Its passed/filtered counters are not wired to the host yet, so filtered traffic is invisible in the statistics."],
+    proof:"Without it, a 20 KB line-rate feed burst dropped 16 frames at the order port; with it, 0."},
+  mac_rx:{sev:"low",
+    limits:["No back-pressure: line rate in, always.",
+            "Frames with a bad FCS, runts or control errors are dropped whole and counted."],
+    risks:["Nothing downstream can slow the link; overload shows up as drops at the packet FIFO."]},
+  feed_fifo:{sev:"medium",
+    limits:["32 KB, whole frames only; a frame that does not fit is dropped whole.",
+            "Worst measured whole-market 10 µs burst: 12.8 KB (07-30-2019), about 2.5× margin."],
+    risks:["A dropped feed frame becomes a MoldUDP64 sequence gap, which halts the feed on this one-line board.",
+           "Sustained input above 2 Gb/s would overflow it; the core side cannot drain faster."]},
+  unpack:{sev:"medium",
+    limits:["8 bits × 250 MHz = 2 Gb/s into the core, by design (the 10G line is 5× faster)."],
+    risks:["The 09:30 opening cross in this replay briefly reached 2.76 Gb/s over 10 µs; the feed FIFO absorbed it."]},
+  udp_rx:{sev:"low",
+    limits:["One destination IP and port per line.",
+            "Cut-through, so the UDP checksum is deliberately not checked (the Ethernet FCS still is)."],
+    risks:["Drop counters are 8-bit saturating (a_drops_sat8): they stop at 255."]},
+  mold:{sev:"medium",
+    limits:["Sequence-aware A/B arbiter, but only line A exists on the KR260.",
+            "Gap recovery: a lost datagram is re-requested from the MoldUDP64 re-request server (mold_rereq_tx); the live feed is held in a 16 KB buffer meanwhile and replayed in order once the gap is filled. Trading pauses while recovering."],
+    risks:["If the re-request server does not answer after the retries, the feed falls back to the old halt (feed_halt) until resync.",
+           "A gap longer than the 16 KB hold buffer drops live messages that then have to be re-requested too (slower catch-up)."]},
+  parser:{sev:"low",
+    limits:["ITCH 5.0: A/F/X/D/E/C/U/P/S/H/Y/Q; others pass through unused.",
+            "Best case one message per 250 MHz cycle."],
+    risks:["s_axis_tkeep is left unconnected in multi_symbol_top, which prints a harmless tkeep-mismatch warning in simulation."]},
+  kvs:{sev:"low",
+    limits:["stock_locate → book slot; NSYMBOLS = 1 on the KR260 build (block RAM budget)."],
+    risks:["Messages for unmapped symbols are dropped and counted (unmapped-symbol drops)."]},
+  book:{sev:"high",
+    limits:["Order store on the KR260 build: 196,608 orders (2 banks × 8,192 buckets × 12 ways, 72-bit entries) in 48 of the K26's 64 UltraRAMs; 64k in the default build.",
+            "Level table: 8k levels per side; ladder window ±$327.68 around a base (farther orders flagged 'far').",
+            "An Add is ready for the next message after 5 cycles; C/D/E take 18, U takes 22 (≈14 messages/µs sustained)."],
+    risks:["08-13-2021 peaks at 112,635 live orders: 57% of the K26 store, replayed exact with 0 faults. On the old 65,536-slot store it overflowed and the RTL halted trading at message 83,003.",
+           "Measured in Vivado (docs/36): 1 symbol uses 28 block RAMs; 4 symbols need 112 of 144 but 110% of the K26's LUTs, hence 1 symbol.",
+           "On the U200 stand-in the core now misses 250 MHz by 0.563 ns (2.957 ns before 9 timing fixes, including fix 3's select stage here); the book's order-store paths are among those still slightly over. The -2LV part is not installed in Vivado yet."],
+    proof:"Exact against the true book after every message: full-day RTL replays of 5 days (1.67M–2.45M messages each, both 2021 days with the K26 store) and 20,000-message slices of all 9 days."},
+  strategy:{sev:"high",
+    limits:["70 ns tick-to-trade (first ITCH byte to decision), 65 ns with FAST_DIV: a core-only figure from tick_to_trade_top.", "On the KR260 path: 176 ns from the first ITCH byte to a risk-approved decision, 678 ns wire to wire with the 8-byte order path."],
+    risks:["On 9 full regular AAPL sessions with per-share fees and trade-driven fills, every strategy loses and none has gross edge: imbalance −$67,951, ofi −$40,088, market_maker −$23,834, avellaneda −$22,551. The best is the whole-cent join maker at −$3,914 (2 of 9 days positive). A 14-symbol study is in progress.",
+           "In this replay, imbalance fired 901 decisions in 30 s; 793 were stopped by the position limit.",
+           "Core clock 250 MHz: after 9 timing fixes the KR260 configuration misses by 0.563 ns on the U200 stand-in (was 2.957 ns; docs/36); the 10G and host clocks meet timing. The K26 -2LV part is slower."]},
+  risk:{sev:"medium",
+    limits:["Combinational (0 ns added): halt, size ≤ 999,999, price collar, position, rate ≤ 1,000 orders per 1 s window.",
+            "Heartbeat watchdog: no host heartbeat for 1 s (250M cycles) halts trading."],
+    risks:["Position follows fills: order_tracker reads the exchange replies and releases exposure for cancelled, rejected and unfilled orders.",
+           "Being combinational, it sits on the critical timing path to the order encoder."]},
+  ouch:{sev:"low",
+    limits:["OUCH 4.2 Enter Order in a SoupBinTCP packet, 52 bytes; short sales marked 'T' from the tracked position."],
+    risks:["The 60 ns order-out figure was measured with the older m2 book, not re-measured on v3."]},
+  session:{sev:"medium",
+    limits:["SoupBinTCP login, sequence numbers, heartbeats; no orders are sent unless logged in."],
+    risks:["Exchange replies also feed order_tracker, which corrects the hardware position from real fills.",
+           "The password is write-only in a CSR; the bring-up tool reads it from a prompt or HFT_SOUP_PASSWORD."]},
+  tcp:{sev:"medium",
+    limits:["One TCP connection, one message per segment, no Nagle.",
+            "Store-and-forward per message: 36 ns of OUCH + TCP buffering on the 8-byte order path (208 ns byte-wide)."],
+    risks:["A retransmission (RTO or 3 duplicate ACKs, go-back-N) delays every order queued behind it."],
+    proof:"Exact orders delivered over a 10% loss link in simulation."},
+  pack:{sev:"low", limits:["Bypassed on the KR260 build: the order path runs 8 bytes per beat (ORDER_TX_BYTES=8).", "Byte-wide build: bytes to 64-bit beats with tkeep, one byte per core cycle in."], risks:["Byte-wide build only: 2 Gb/s out of the core."]},
+  tx_fifo:{sev:"low",
+    limits:["Store-and-forward whole frames (the MAC cannot pause mid-frame)."],
+    risks:["Adds the full frame's transfer time before the MAC starts sending: 68 ns on the 8-byte order path (460 ns byte-wide)."]},
+  mac_tx:{sev:"low",
+    limits:["Adds preamble, FCS and inter-frame gap; ARP replies are inserted only between frames."],
+    risks:["An ARP reply already in progress can delay an order by one short frame."]},
+  pcs_tx:{sev:"medium", limits:["AMD IP; latency not measured here."], risks:["Same unverified reference-clock choice as the receive side."]},
+  sfp_tx:{sev:"medium", limits:["Same single cage as the receive side."], risks:["TX_DISABLE and TX_FAULT are wired but untested on hardware."]},
+  host:{sev:"medium",
+    limits:["Zynq PS at 100 MHz over AXI-Lite; decisions FIFO depth 32, exchange replies FIFO depth 256."],
+    risks:["The host's drain rate for the decision FIFO has not been measured.",
+           "If the host stops sending heartbeats for 1 s, the watchdog halts trading (by design)."]}
+};
+
+// ---------------- helpers ----------------
+function el(tag, attrs, parent, text) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text !== undefined) e.textContent = text;
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function h(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+function fmtPx(p) { if (p == null) return "—"; const v = p / 1e4; return (p % 100 === 0) ? v.toFixed(2) : v.toFixed(4); }
+function fmtInt(n) { return n == null || isNaN(n) ? "—" : Math.round(n).toLocaleString("en-US"); }
+function fmtT(ns) {
+  if (ns == null || isNaN(ns)) return "--:--:--";
+  let s = Math.floor(ns / 1e9); const frac = Math.floor((ns % 1e9) / 1e3);
+  const hh = Math.floor(s / 3600); s -= hh * 3600; const mm = Math.floor(s / 60); const ss = s - mm * 60;
+  return `${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")}:${String(ss).padStart(2,"0")}.${String(frac).padStart(6,"0")}`;
+}
+function fmtCap(v, unit) {
+  if (typeof v !== "number") return String(v ?? "—");
+  const s = Math.abs(v) >= 1000 ? fmtInt(v) : (Math.round(v * 100) / 100).toString();
+  return unit ? `${s} ${unit}` : s;
+}
+const isPass = r => /^(pass|ok|accept)/i.test(String(r || ""));
+const TYPE = {A:"Add",F:"Add MPID",E:"Exec",C:"Exec @px",X:"Cancel",D:"Delete",U:"Replace",P:"Trade",Q:"Cross",S:"System",R:"Directory",H:"Halt",Y:"Reg SHO",L:"Participant",I:"NOII",B:"Broken"};
+function msgColor(m) {
+  const t = m[1];
+  if (t === "A" || t === "F") return m[2] === 0 ? "var(--bid)" : "var(--ask)";
+  if (t === "E" || t === "C" || t === "P" || t === "Q") return "var(--copper)";
+  return "var(--muted)";
+}
+function sideTxt(s) { return s === 0 ? "Buy" : s === 1 ? "Sell" : "—"; }
+function tokenColor(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+// ---------------- data load ----------------
+const wantSample = location.hash === "#sample";
+function load() {
+  const url = wantSample ? "sample_flow_data.json" : "flow_data.json";
+  $("grid").hidden = true;
+  const st = h("div", "state", "Loading market data…"); st.id = "loadState";
+  $("app").appendChild(st);
+  fetch(url).then(r => { if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`); return r.json(); })
+    .then(d => { st.remove(); $("grid").hidden = false; init(d); setPlaying(true); })
+    .catch(e => {
+      st.className = "state err";
+      st.textContent = `Could not load the replay data (${e.message}). The page needs flow_data.json published next to it.`;
+      buildDiagram(); renderInfo(null);
+    });
+}
+
+// ---------------- precompute ----------------
+function precompute() {
+  const M = D.messages, n = M.length;
+  T = new Float64Array(n); FIFO = new Float32Array(n); GBPS = new Float32Array(n); RATE = new Float32Array(n);
+  for (let i = 0; i < n; i++) T[i] = M[i][0];
+  // times may be relative to the window start: add the window's start time of day
+  const mw = /(\d{1,2}):(\d{2}):(\d{2}(?:\.\d+)?)/.exec((D.meta && D.meta.window) || "");
+  if (mw && n) {
+    const base = ((+mw[1]) * 3600 + (+mw[2]) * 60 + parseFloat(mw[3])) * 1e9;
+    if (T[0] < base - 1e9) for (let i = 0; i < n; i++) T[i] += base;
+  }
+  // feed FIFO: bytes arrive with each message, drain at the core side's 2 Gb/s = 0.25 B/ns
+  const drainBpns = caps.drain / 8;
+  let fill = 0;
+  for (let i = 0; i < n; i++) {
+    const dt = i ? T[i] - T[i - 1] : 0;
+    fill = Math.max(0, fill - dt * drainBpns) + (M[i][5] || 0);
+    FIFO[i] = fill;
+  }
+  // arrival rate over the last 100 us (Gb/s) and messages/s over the last 1 ms
+  let j = 0, bytes = 0, k = 0;
+  for (let i = 0; i < n; i++) {
+    bytes += M[i][5] || 0;
+    while (T[i] - T[j] > 100e3) { bytes -= M[j][5] || 0; j++; }
+    GBPS[i] = bytes * 8 / 100e3;
+    while (T[i] - T[k] > 1e6) k++;
+    RATE[i] = (i - k + 1) * 1000;
+  }
+}
+
+function init(d) {
+  D = d;
+  D.messages = D.messages || []; D.tops = D.tops || []; D.state = D.state || []; D.decisions = D.decisions || [];
+  for (const p of (D.pipeline || [])) PIPE[p.id] = p;
+  for (const c of (D.chokepoints || [])) (CHOKE_BY_STAGE[c.stage] = CHOKE_BY_STAGE[c.stage] || []).push(c);
+  for (const c of (D.chokepoints || [])) {
+    if (typeof c.capacity !== "number") continue;
+    const u = String(c.unit || "").toLowerCase();
+    if (c.stage === "book" && u.startsWith("order")) caps.store = c.capacity;
+    else if (c.stage === "book" && u.startsWith("level")) caps.levels = c.capacity;
+    else if (c.stage === "feed_fifo" && (u === "b" || u.startsWith("byte"))) caps.fifo = c.capacity;
+    else if (c.stage === "feed_fifo" && u === "kb") caps.fifo = c.capacity * 1024;
+    else if (u.includes("gb/s") && (c.stage === "unpack" || /core|drain/i.test(c.id))) caps.drain = c.capacity;
+  }
+  for (const dd of D.decisions) { if (!decAt.has(dd.i)) decAt.set(dd.i, []); decAt.get(dd.i).push(dd); }
+  const m = D.meta || {};
+  $("metaLine").textContent = `${m.symbol || "?"} · ${m.date || "?"} · ${m.window || ""} · ${fmtInt(m.n_messages ?? D.messages.length)} messages · ${m.source || ""}`;
+  $("bookSym").textContent = m.symbol ? `${m.symbol} · top 10` : "";
+  if (m.note) $("dnote").textContent = `${m.note} Packets are slowed for the eye; every ns figure on a block is the measured stage time. Hover a block for its limits and risks; click it to pin the details. The stripe under each block is its risk: red high, amber watch, green low.`;
+  precompute();
+  buildDiagram(); buildPaths(); buildBook(); buildMeters(); buildChokes(); buildLatency();
+  $("scrub").max = Math.max(0, D.messages.length - 1);
+  seek(0);
+  renderInfo(null);
+  requestAnimationFrame(frame);
+}
+
+// ---------------- diagram ----------------
+function buildDiagram() {
+  const svg = $("dia"); svg.textContent = "";
+  for (const r of REG) {
+    el("rect", {x:r.x, y:r.y, width:r.w, height:r.h, rx:6, fill:`var(${r.fill})`}, svg);
+    el("text", {x:r.x + 10, y:r.y + 17, class:"reg", fill:`var(${r.ink})`}, svg, r.name.toUpperCase());
+  }
+  // CDC boundaries
+  el("line", {x1:575, y1:30, x2:575, y2:430, class:"cdc"}, svg);
+  el("line", {x1:575, y1:440, x2:1490, y2:440, class:"cdc"}, svg);
+  el("text", {x:582, y:424, class:"note"}, svg, "CDC: async packet FIFOs");
+  el("text", {x:1290, y:436, class:"note"}, svg, "CDC: async FIFOs · AXI-Lite · 2-FF sync");
+  // single SFP+ cage bracket
+  el("path", {d:"M18 72 L18 386", class:"dash"}, svg);
+  el("text", {x:20, y:228, class:"note"}, svg, "one SFP+ cage");
+  el("text", {x:20, y:242, class:"note"}, svg, "RX / TX lanes");
+  // traces
+  el("polyline", {points:RX_IDS.map(center).map(p => p.join(",")).join(" "), class:"trace"}, svg);
+  const tx = TX_IDS.map(center); tx[0] = [center("book")[0], BOX.book[1] + BOX.book[3]];
+  el("polyline", {points:[center("book"), ...tx].map(p => p.join(",")).join(" "), class:"trace tx"}, svg);
+  // order-path RX branch: TCP/ARP from the exchange
+  el("polyline", {points:"335,128 335,266 1005,266 1005,330", class:"dash"}, svg);
+  el("text", {x:345, y:260, class:"note"}, svg, "TCP / ARP from the exchange → order MAC → RX FIFO (CDC) → session");
+  el("text", {x:292, y:146, class:"note"}, svg, "UDP → feed");
+  // host links
+  el("polyline", {points:"1275,378 1275,450 1200,450 1200,478", class:"dash"}, svg);
+  el("text", {x:1282, y:398, class:"note"}, svg, "decisions FIFO");
+  el("text", {x:1282, y:411, class:"note"}, svg, "+ exchange replies");
+  el("polyline", {points:"925,478 925,420 1005,420 1005,378", class:"dash"}, svg);
+  el("text", {x:855, y:412, class:"note"}, svg, "AXI-Lite CSRs");
+  el("text", {x:855, y:425, class:"note"}, svg, "halt · heartbeat");
+  // nodes
+  for (const id in BOX) {
+    const [x, y, w, hh] = BOX[id];
+    const p = PIPE[id] || {};
+    const g = el("g", {class:"node", tabindex:0, role:"button", "aria-label":p.label || id}, svg);
+    el("rect", {x, y, width:w, height:hh, rx:4, class:"box"}, g);
+    heatEl[id] = el("rect", {x, y, width:w, height:hh, rx:4, class:"heat", opacity:0}, g);
+    const rk = RISK[id];
+    if (rk) el("rect", {x:x + 1, y:y + hh - 4, width:w - 2, height:3, rx:1.5,
+                        fill:`var(--${rk.sev === "high" ? "tight" : rk.sev === "medium" ? "watch" : "ok"})`}, g);
+    nodeEl[id] = g;
+    const label = p.label || id.replace(/_/g, " ");
+    const lines = wrapLabel(label, id === "book" || id === "host" ? 26 : 11);
+    lines.forEach((ln, k) => el("text", {x:x + 8, y:y + 16 + k * 13, class:"lbl"}, g, ln));
+    const nsTxt = p.ns == null ? "not measured" : `${fmtNs(p.ns)}`;
+    el("text", {x:x + 8, y:y + (id === "book" ? 16 + lines.length * 13 + 2 : hh - 7), class:"ns"}, g, nsTxt);
+    const ch = CHOKE_BY_STAGE[id];
+    if (ch) {
+      const worst = ch.some(c => c.level === "tight") ? "tight" : ch.some(c => c.level === "watch") ? "watch" : "ok";
+      el("circle", {cx:x + w - 8, cy:y + 8, r:5, fill:`var(--${worst})`}, g).appendChild(el("title", {}, null, `choke point: ${ch.map(c => c.label).join(", ")}`));
+    }
+    g.addEventListener("click", () => selectNode(id));
+    g.addEventListener("mouseenter", e => showTip(id, e));
+    g.addEventListener("mousemove", e => placeTip(e.clientX, e.clientY));
+    g.addEventListener("mouseleave", hideTip);
+    g.addEventListener("focus", () => { const r = g.getBoundingClientRect(); showTip(id, null); placeTip(r.right, r.top); });
+    g.addEventListener("blur", hideTip);
+    g.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectNode(id); } });
+    heat[id] = 0;
+  }
+  // host node contents
+  const [hx, hy] = BOX.host;
+  ["AXI-Lite CSRs: symbols, order entry, TCP session, feed filters",
+   "decisions FIFO (32) and exchange replies FIFO (256) in",
+   "halt · strategy select · heartbeat · safety clear out",
+   "bring-up: host/hft_system_ctl.py over /dev/mem"].forEach((t, k) =>
+    el("text", {x:hx + 8, y:hy + 34 + k * 13, class:"note"}, svg, t));
+  // book node internals: two live load bars
+  const [bx, by] = BOX.book;
+  const mk = (yy, name) => {
+    el("text", {x:bx + 8, y:yy - 3, class:"ns"}, svg, name);
+    el("rect", {x:bx + 8, y:yy, width:144, height:7, rx:2, fill:"var(--panel2)", stroke:"var(--line)"}, svg);
+    const f = el("rect", {x:bx + 8, y:yy, width:0, height:7, rx:2, fill:"var(--ok)"}, svg);
+    el("line", {x1:bx + 8 + 144 * .85, y1:yy - 2, x2:bx + 8 + 144 * .85, y2:yy + 9, stroke:"var(--ink)", "stroke-width":1.2, opacity:.6}, svg);
+    return f;
+  };
+  meterEls.svgStore = mk(by + 88, "order store load");
+  meterEls.svgLvl = mk(by + 116, "level table load");
+  // particle layer on top
+  paths.layer = el("g", {}, svg);
+}
+function fmtNs(ns) { return ns >= 1000 ? `${(ns / 1000).toFixed(2)} µs` : `${Math.round(ns * 10) / 10} ns`; }
+function wrapLabel(s, n) {
+  const words = String(s).split(/\s+/); const out = []; let cur = "";
+  for (const w of words) { if ((cur + " " + w).trim().length > n && cur) { out.push(cur); cur = w; } else cur = (cur + " " + w).trim(); }
+  if (cur) out.push(cur);
+  return out.slice(0, 2);
+}
+
+function buildPaths() {
+  const mk = ids => {
+    const pts = ids.map(center); const hops = []; let total = 0;
+    if (ids[0] === "book") pts[0] = center("book");
+    for (let k = 0; k < ids.length - 1; k++) {
+      const ns = PIPE[ids[k + 1]] ? PIPE[ids[k + 1]].ns : null;
+      const dur = Math.min(260, 70 + (ns == null ? 0 : ns * 3.5));
+      hops.push({a:pts[k], b:pts[k + 1], dur, from:ids[k], to:ids[k + 1], t0:total});
+      total += dur;
+    }
+    return {hops, total};
+  };
+  paths.rx = mk(RX_IDS); paths.tx = mk(TX_IDS); paths.rej = mk(["book", "strategy", "risk"]);
+}
+
+function spawn(kind, color, r, delay) {
+  if (reduceMotion) return false;
+  if (particles.length >= MAX_P) { undrawn++; return false; }
+  const c = el("circle", {r, fill:color, cx:-20, cy:-20}, paths.layer);
+  if (kind === "rej") c.setAttribute("opacity", "0.55");
+  if (kind === "tx") c.setAttribute("stroke", "var(--panel)"), c.setAttribute("stroke-width", "1.5");
+  particles.push({p:paths[kind], t0:performance.now() + (delay || 0), el:c, hop:-1});
+  return true;
+}
+function stepParticles(now) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const q = particles[i]; const e = now - q.t0;
+    if (e < 0) continue;
+    if (e >= q.p.total) { heat[q.p.hops[q.p.hops.length - 1].to] = 1; q.el.remove(); particles.splice(i, 1); continue; }
+    let k = q.hop < 0 ? 0 : q.hop;
+    while (k < q.p.hops.length - 1 && e > q.p.hops[k].t0 + q.p.hops[k].dur) k++;
+    const hp = q.p.hops[k];
+    if (k !== q.hop) { heat[hp.from] = 1; q.hop = k; }
+    const f = Math.min(1, (e - hp.t0) / hp.dur);
+    q.el.setAttribute("cx", hp.a[0] + (hp.b[0] - hp.a[0]) * f);
+    q.el.setAttribute("cy", hp.a[1] + (hp.b[1] - hp.a[1]) * f);
+  }
+}
+function stepHeat(dt) {
+  const decay = Math.exp(-dt / 380);
+  for (const id in heat) {
+    if (heat[id] < 0.01 && heat[id] !== 0) heat[id] = 0;
+    heatEl[id].setAttribute("opacity", (heat[id] * 0.38).toFixed(3));
+    heat[id] *= decay;
+  }
+}
+
+
+// ---------------- hover card ----------------
+const tipEl = h("div", "tip"); tipEl.hidden = true; tipEl.setAttribute("role", "tooltip");
+document.body.appendChild(tipEl);
+let tipId = null;
+function riskLists(id, parent) {
+  const rk = RISK[id]; if (!rk) return;
+  const mk = (title, items, cls) => {
+    if (!items || !items.length) return;
+    parent.appendChild(h("h3", "", title));
+    const ul = h("ul"); for (const t of items) ul.appendChild(h("li", cls, t)); parent.appendChild(ul);
+  };
+  mk("Limits", rk.limits, "l");
+  mk("Risks", rk.risks, "r");
+  if (rk.proof) { parent.appendChild(h("h3", "", "Verified")); parent.appendChild(h("div", "", rk.proof)); }
+}
+function liveLine(id) {
+  if (!D || !D.messages.length) return "";
+  const s = D.state[idx];
+  if (id === "book" && s) return `now: ${fmtInt(s[0])} live orders (${(100 * s[0] / caps.store).toFixed(1)}% of ${fmtInt(caps.store)}) · levels ${fmtInt(s[1])} bid / ${fmtInt(s[2])} ask`;
+  if (id === "feed_fifo") return `now: ${fmtInt(FIFO[idx])} B queued of ${fmtInt(caps.fifo)} B (simulated from message sizes)`;
+  if (id === "unpack" || id === "udp_rx") return `now: ${(GBPS[idx] || 0).toFixed(3)} Gb/s arriving (last 100 µs) vs ${caps.drain} Gb/s drain`;
+  if (id === "parser") return `now: ${fmtInt(RATE[idx])} messages/s (last 1 ms)`;
+  if (id === "risk" || id === "strategy") { let n = 0, r = 0; for (const d of D.decisions) if (d.i <= idx) { n++; if (!isPass(d.risk)) r++; } return `so far: ${n} decisions, ${n - r} sent, ${r} stopped by risk`; }
+  return "";
+}
+function showTip(id, e) {
+  tipId = id; tipEl.textContent = "";
+  const p = PIPE[id] || {}; const rk = RISK[id] || {};
+  const th = h("div", "th"); th.append(h("b", "", p.label || id));
+  if (rk.sev) th.append(h("span", "sev " + rk.sev, rk.sev === "high" ? "high risk" : rk.sev === "medium" ? "watch" : "low risk"));
+  tipEl.append(th, h("div", "mod", `${p.module || ""}${p.ns != null ? " · " + fmtNs(p.ns) : " · latency not measured"}`));
+  const lv = liveLine(id); if (lv) tipEl.append(h("div", "live", lv));
+  riskLists(id, tipEl);
+  const ch = CHOKE_BY_STAGE[id];
+  if (ch) { tipEl.append(h("h3", "", "Choke points")); const ul = h("ul"); for (const c of ch) ul.append(h("li", c.level === "tight" ? "r" : "l", `${c.label}: ${typeof c.capacity === "number" && c.capacity > 0 ? `peak ${fmtCap(c.peak, "")} of ${fmtCap(c.capacity, c.unit)}` : `${c.peak} ${c.unit || ""}`}`)); tipEl.append(ul); }
+  tipEl.hidden = false;
+  if (e) placeTip(e.clientX, e.clientY);
+}
+function placeTip(x, y) {
+  if (tipEl.hidden) return;
+  const r = tipEl.getBoundingClientRect(), W = window.innerWidth, H = window.innerHeight;
+  let left = x + 16, top = y + 14;
+  if (left + r.width > W - 8) left = Math.max(8, x - r.width - 16);
+  if (top + r.height > H - 8) top = Math.max(8, H - r.height - 8);
+  tipEl.style.left = left + "px"; tipEl.style.top = top + "px";
+}
+function hideTip() { tipEl.hidden = true; tipId = null; }
+
+// ---------------- node info ----------------
+function selectNode(id) {
+  if (selNode && nodeEl[selNode]) nodeEl[selNode].classList.remove("sel");
+  selNode = selNode === id ? null : id;
+  if (selNode) nodeEl[selNode].classList.add("sel");
+  renderInfo(selNode);
+}
+function renderInfo(id) {
+  const box = $("info"); box.textContent = "";
+  if (!id) {
+    const d = h("div", "desc");
+    d.textContent = "Market data enters the single SFP+ port at the left, is filtered by class (UDP to the feed path, TCP and ARP to the order path), crosses into the 250 MHz core through asynchronous packet FIFOs, is parsed and applied to the order book, and any decision leaves as an OUCH order over TCP on the same port. Click any block for its module, clock domain and measured latency.";
+    box.appendChild(d); return;
+  }
+  const p = PIPE[id] || {id};
+  const add = (k, v) => { box.appendChild(h("b", "", k)); box.appendChild(h("span", "mono", v)); };
+  add("Block", p.label || id);
+  add("RTL module", p.module || "—");
+  add("Clock domain", ({phy:"GTH transceiver / PCS", xgmii:"XGMII 156.25 MHz", core:"core 250 MHz", host:"host 100 MHz"})[p.domain] || p.domain || "—");
+  add("Stage latency", p.ns == null ? "not measured" : fmtNs(p.ns));
+  const ch = CHOKE_BY_STAGE[id];
+  if (ch) add("Choke points", ch.map(c => `${c.label} (${c.level})`).join(" · "));
+  if (RISK[id]) add("Risk", RISK[id].sev === "high" ? "high: can stop trading or trade on bad state" : RISK[id].sev === "medium" ? "watch: a known limit real data gets near" : "low: contained by design");
+  if (p.desc) box.appendChild(h("div", "desc", p.desc));
+  if (RISK[id]) { const l = h("div", "lists"); const a = h("div"), b = h("div");
+    const rk = RISK[id];
+    const mk = (par, title, items, cls) => { if (!items || !items.length) return; par.appendChild(h("h3", "", title)); const ul = h("ul"); for (const t of items) ul.appendChild(h("li", cls, t)); par.appendChild(ul); };
+    mk(a, "Limits", rk.limits, "l"); mk(b, "Risks", rk.risks, "r");
+    if (rk.proof) { b.appendChild(h("h3", "", "Verified")); b.appendChild(h("div", "", rk.proof)); }
+    l.append(a, b); box.appendChild(l); }
+}
+
+// ---------------- order book ----------------
+function buildBook() {
+  const lad = $("ladder"); lad.textContent = "";
+  const mkRow = cls => { const r = h("div", "row " + cls); const b = h("div", "szbar"); const px = h("span", "px"); const sz = h("span", "sz"); r.append(b, px, sz); lad.appendChild(r); return {r, b, px, sz}; };
+  const asks = []; for (let k = 0; k < 10; k++) asks.push(mkRow("ask"));
+  const spread = h("div", "spread"); lad.appendChild(spread);
+  const bids = []; for (let k = 0; k < 10; k++) bids.push(mkRow("bid"));
+  bookEls = {asks, bids, spread};
+  $("cLiveCap").textContent = `of ${fmtInt(caps.store)}`;
+  $("cLvlCap").textContent = `of ${fmtInt(caps.levels)}`;
+  $("cLvlCap2").textContent = `of ${fmtInt(caps.levels)}`;
+}
+function renderBook(i, flashIt) {
+  const top = D.tops[i] || [[], []];
+  const bids = top[0] || [], asks = top[1] || [];
+  let mx = 1; for (const l of bids) mx = Math.max(mx, l[1]); for (const l of asks) mx = Math.max(mx, l[1]);
+  const m = D.messages[i];
+  // asks: worst at top, best just above the spread
+  for (let k = 0; k < 10; k++) {
+    const lvl = asks[9 - k]; const row = bookEls.asks[k];
+    fillRow(row, lvl, mx, 9 - k === 0, m && m[2] === 1 && lvl && lvl[0] === m[3] && flashIt);
+  }
+  for (let k = 0; k < 10; k++) {
+    const lvl = bids[k]; const row = bookEls.bids[k];
+    fillRow(row, lvl, mx, k === 0, m && m[2] === 0 && lvl && lvl[0] === m[3] && flashIt);
+  }
+  const bb = bids[0], ba = asks[0];
+  const sp = bookEls.spread; sp.textContent = "";
+  const a = h("span"), b = h("span");
+  if (bb && ba) {
+    a.append("spread ", Object.assign(h("b", "num"), {textContent:`$${((ba[0] - bb[0]) / 1e4).toFixed(2)}`}));
+    b.append("mid ", Object.assign(h("b", "num"), {textContent:`$${((ba[0] + bb[0]) / 2e4).toFixed(3)}`}));
+  } else a.textContent = bb || ba ? "one-sided book" : "empty book";
+  sp.append(a, b);
+  const s = D.state[i];
+  if (s) {
+    $("cLive").textContent = fmtInt(s[0]); $("cBid").textContent = fmtInt(s[1]); $("cAsk").textContent = fmtInt(s[2]);
+  }
+  if (m) $("lastMsg").textContent = `#${fmtInt(i)} · ${m[1]} ${TYPE[m[1]] || ""} · ${sideTxt(m[2])} ${m[4] ? fmtInt(m[4]) : ""}${m[3] ? " @ " + fmtPx(m[3]) : ""}`;
+}
+function fillRow(row, lvl, mx, best, flash) {
+  row.r.classList.toggle("best", !!best);
+  if (!lvl) { row.px.textContent = "·"; row.sz.textContent = ""; row.b.style.width = "0"; return; }
+  row.px.textContent = fmtPx(lvl[0]); row.sz.textContent = fmtInt(lvl[1]);
+  row.b.style.width = `${Math.max(1, 100 * lvl[1] / mx)}%`;
+  if (flash && !reduceMotion) { row.r.classList.remove("flash"); void row.r.offsetWidth; row.r.classList.add("flash"); }
+}
+
+// ---------------- choke points ----------------
+function meter(parent, title, capTxt, markFrac, foot) {
+  const w = h("div", "meter");
+  const top = h("div", "top"); const nm = h("span", "", title); const v = h("span", "num", "—"); top.append(nm, v);
+  const tr = h("div", "track"); const f = h("div", "fill"); tr.appendChild(f);
+  if (markFrac != null) { const mk = h("div", "mark"); mk.style.left = `${markFrac * 100}%`; tr.appendChild(mk); }
+  const pk = h("div", "peakmark"); pk.style.left = "0"; tr.appendChild(pk);
+  const ft = h("div", "foot", foot || "");
+  w.append(top, tr, ft); parent.appendChild(w);
+  return {v, f, pk, cap:capTxt};
+}
+function buildMeters() {
+  const box = $("liveMeters"); box.textContent = "";
+  meterEls.fifo = meter(box, "Feed RX FIFO fill", "", null, `Arriving bytes against the core side's ${caps.drain} Gb/s drain; capacity ${fmtInt(caps.fifo)} B. The bar marks the peak seen so far.`);
+  meterEls.gbps = meter(box, "Arrival rate vs core drain", "", null, `Feed rate over the last 100 µs against the 8-bit × 250 MHz = ${caps.drain} Gb/s core side.`);
+  meterEls.store = meter(box, "Order store load", "", 0.85, `Live orders of ${fmtInt(caps.store)}. The line at 85% is where the 2-choice hash first overflowed in stress tests.`);
+  meterEls.peak = {fifo:0, gbps:0, store:0};
+}
+function levelColor(frac, warn, bad) { return frac >= bad ? "var(--tight)" : frac >= warn ? "var(--watch)" : "var(--ok)"; }
+function renderMeters(i) {
+  const fifo = FIFO[i] || 0, g = GBPS[i] || 0, s = D.state[i] ? D.state[i][0] : 0;
+  const P = meterEls.peak;
+  P.fifo = Math.max(P.fifo, fifo); P.gbps = Math.max(P.gbps, g); P.store = Math.max(P.store, s);
+  const set = (m, frac, txt, peakFrac, col) => {
+    m.f.style.width = `${Math.min(100, frac * 100)}%`; m.f.style.background = col; m.v.textContent = txt;
+    m.pk.style.left = `calc(${Math.min(100, peakFrac * 100)}% - 1px)`;
+  };
+  const ff = fifo / caps.fifo; set(meterEls.fifo, ff, `${fmtInt(fifo)} B · ${(ff * 100).toFixed(1)}%`, P.fifo / caps.fifo, levelColor(ff, .5, .85));
+  const gf = g / caps.drain; set(meterEls.gbps, gf, `${g.toFixed(3)} / ${caps.drain} Gb/s`, P.gbps / caps.drain, levelColor(gf, .6, .95));
+  const sf = s / caps.store; set(meterEls.store, sf, `${fmtInt(s)} · ${(sf * 100).toFixed(1)}%`, P.store / caps.store, levelColor(sf, .7, .85));
+  if (D.state[i]) {
+    const lv = Math.max(D.state[i][1], D.state[i][2]) / caps.levels;
+    meterEls.svgStore.setAttribute("width", Math.min(144, 144 * sf)); meterEls.svgStore.setAttribute("fill", levelColor(sf, .7, .85));
+    meterEls.svgLvl.setAttribute("width", Math.min(144, 144 * lv)); meterEls.svgLvl.setAttribute("fill", levelColor(lv, .7, .85));
+  }
+}
+function recomputePeaks(i) {
+  const P = meterEls.peak; P.fifo = 0; P.gbps = 0; P.store = 0;
+  for (let k = 0; k <= i; k++) { if (FIFO[k] > P.fifo) P.fifo = FIFO[k]; if (GBPS[k] > P.gbps) P.gbps = GBPS[k]; const s = D.state[k]; if (s && s[0] > P.store) P.store = s[0]; }
+}
+function buildChokes() {
+  const box = $("chokeList"); box.textContent = "";
+  const list = D.chokepoints || [];
+  if (!list.length) { box.appendChild(h("div", "empty", "No choke points in the data.")); return; }
+  const order = {tight:0, watch:1, ok:2};
+  for (const c of [...list].sort((a, b) => (order[a.level] ?? 3) - (order[b.level] ?? 3))) {
+    const lv = ["ok", "watch", "tight"].includes(c.level) ? c.level : "ok";
+    const d = h("div", "choke " + lv); d.tabIndex = 0; d.setAttribute("role", "button");
+    const nm = h("span", "nm", c.label); const pill = h("span", "pill " + lv, lv);
+    const val = h("div", "val");
+    const num = typeof c.capacity === "number" && typeof c.peak === "number" && c.capacity > 0;
+    val.textContent = num ? `peak ${fmtCap(c.peak, "")} of ${fmtCap(c.capacity, c.unit)} · ${(100 * c.peak / c.capacity).toFixed(1)}%`
+                          : (c.capacity === 0 ? `${c.peak} ${c.unit || ""} (limit ${c.capacity})` : `capacity ${fmtCap(c.capacity, c.unit)} · peak ${fmtCap(c.peak, "")}`);
+    d.append(nm, pill, val);
+    if (num) { const tr = h("div", "track"); const f = h("div", "fill"); f.style.width = `${Math.min(100, 100 * c.peak / c.capacity)}%`; f.style.background = `var(--${lv})`; tr.appendChild(f); d.appendChild(tr); }
+    const stage = PIPE[c.stage] ? PIPE[c.stage].label : c.stage;
+    d.appendChild(h("div", "nt", `${stage}${c.peak_note ? " · " + c.peak_note : ""}`));
+    const go = () => { if (BOX[c.stage]) { if (selNode !== c.stage) selectNode(c.stage); document.querySelector(".diagram").scrollIntoView({behavior: reduceMotion ? "auto" : "smooth", block:"nearest"}); } };
+    d.addEventListener("click", go); d.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+    box.appendChild(d);
+  }
+}
+
+// ---------------- latency ----------------
+function buildLatency() {
+  const L = D.latency || {}; const bd = L.breakdown || [];
+  const lat = $("lat"), leg = $("latLegend"); lat.textContent = ""; leg.textContent = "";
+  const tot = L.t2t_ns || bd.reduce((a, b) => a + (b.ns || 0), 0);
+  $("t2tTot").textContent = tot ? `t2t ${fmtNs(tot)}` : "";
+  const meas = bd.filter(b => b.ns != null);
+  const cols = ["--d-x-ink", "--copper", "--bid", "--order", "--ask", "--watch", "--d-host-ink", "--d-phy-ink"];
+  const sum = meas.reduce((a, b) => a + b.ns, 0) || 1;
+  meas.forEach((b, k) => {
+    const d = h("div"); d.style.flex = `${Math.max(b.ns || 0, sum * 0.02)} 1 0`; d.style.background = `var(${cols[k % cols.length]})`;
+    const lbl = PIPE[b.stage] ? PIPE[b.stage].label : b.stage;
+    d.textContent = b.ns / sum > 0.22 ? `${lbl} ${fmtNs(b.ns)}` : ""; d.title = `${lbl}: ${fmtNs(b.ns)}`;
+    lat.appendChild(d);
+    const lg = h("span"); const sw = h("i"); sw.style.cssText = `display:inline-block;width:9px;height:9px;margin-right:5px;background:var(${cols[k % cols.length]})`;
+    lg.append(sw, `${lbl} ${fmtNs(b.ns)}`); leg.appendChild(lg);
+  });
+  const um = bd.filter(b => b.ns == null).map(b => PIPE[b.stage] ? PIPE[b.stage].label : b.stage);
+  if (um.length) leg.appendChild(h("span", "", `not measured: ${um.join(", ")}`));
+  const def = $("latDef"); def.textContent = [L.t2t_def ? `t2t = ${L.t2t_def}.` : "", L.notes || ""].join(" ").trim();
+  if (!meas.length) lat.appendChild(Object.assign(h("div"), {textContent:"no breakdown in data"}));
+}
+
+// ---------------- order log + tape ----------------
+function orderRow(dd, fresh) {
+  const tr = h("tr", fresh ? "new" : "");
+  const m = D.messages[dd.i];
+  const pass = isPass(dd.risk); const risk = pass ? "sent" : `rejected: ${dd.risk || "?"}`;
+  const cells = [fmtT(m ? T[dd.i] : null).slice(0, 15), dd.strategy || "—", dd.side, fmtInt(dd.shares), fmtPx(dd.price), risk, dd.t2t_ns != null ? fmtNs(dd.t2t_ns) : "—"];
+  cells.forEach((c, k) => { const td = h("td", k >= 3 && k !== 5 ? "r" : ""); td.textContent = c;
+    if (k === 2) td.className = "s" + dd.side; if (k === 5) td.className = pass ? "vpass" : "vrej"; tr.appendChild(td); });
+  if (dd.side === "T") tr.title = "T = short sale (Reg SHO)";
+  return tr;
+}
+function ordWanted(dd) { const f = $("ordFilter").value; return f === "all" || (f === "acc") === isPass(dd.risk); }
+function rebuildOrders(i) {
+  const tb = $("orders"); tb.textContent = "";
+  const list = D.decisions.filter(d => d.i <= i && ordWanted(d)).slice(-60).reverse();
+  for (const dd of list) tb.appendChild(orderRow(dd, false));
+  if (!list.length) { const tr = h("tr"); const td = h("td", "", "None yet at this point in the replay."); td.colSpan = 7; td.style.color = "var(--muted)"; tr.appendChild(td); tb.appendChild(tr); }
+  updOrdCount(i);
+}
+function updOrdCount(i) {
+  let n = 0, rej = 0; for (const d of D.decisions) if (d.i <= i) { n++; if (!isPass(d.risk)) rej++; }
+  $("ordCount").textContent = `${n - rej} sent · ${rej} rejected by risk (${n} decisions so far)`;
+}
+function tapeRow(i) {
+  const m = D.messages[i]; const tr = h("tr");
+  [fmtT(T[i]).slice(0, 15), `${m[1]} ${TYPE[m[1]] || ""}`, sideTxt(m[2]), m[4] ? fmtInt(m[4]) : "", m[3] ? fmtPx(m[3]) : ""].forEach((c, k) => {
+    const td = h("td", k >= 3 ? "r" : ""); td.textContent = c; if (k === 2 && m[2] >= 0) td.className = m[2] === 0 ? "sB" : "sS"; tr.appendChild(td); });
+  return tr;
+}
+function rebuildTape(i) {
+  const tb = $("tape"); tb.textContent = "";
+  for (let k = i; k >= Math.max(0, i - 13); k--) tb.appendChild(tapeRow(k));
+}
+
+// ---------------- replay control ----------------
+function process(i, spawnOk) {
+  const m = D.messages[i];
+  if (spawnOk) spawn("rx", msgColor(m), m[1] === "E" || m[1] === "C" || m[1] === "P" ? 5.5 : 4.2, 0);
+  const ds = decAt.get(i);
+  if (ds) {
+    const tb = $("orders");
+    if (tb.firstChild && tb.firstChild.firstChild && tb.firstChild.firstChild.colSpan === 7) tb.textContent = "";
+    for (const dd of ds) {
+      if (isPass(dd.risk)) spawn("tx", "var(--order)", 7, paths.rx.total);
+      else if (rejBudget > 0) { rejBudget--; spawn("rej", "var(--tight)", 3.2, paths.rx.total); }
+      if (!ordWanted(dd)) continue;
+      tb.insertBefore(orderRow(dd, true), tb.firstChild);
+      while (tb.children.length > 60) tb.lastChild.remove();
+    }
+    updOrdCount(i);
+  }
+}
+function seek(i) {
+  idx = Math.max(0, Math.min(D.messages.length - 1, i));
+  clock = T[idx];
+  for (const q of particles) q.el.remove(); particles.length = 0; undrawn = 0;
+  recomputePeaks(idx);
+  rebuildOrders(idx); rebuildTape(idx);
+  renderAll(true);
+}
+function renderAll(flash) {
+  if (idx !== lastBookIdx) { renderBook(idx, flash); lastBookIdx = idx; }
+  renderMeters(idx);
+  $("clk").textContent = fmtT(clock);
+  $("rate").textContent = fmtInt(RATE[idx]);
+  $("scrub").value = idx;
+  $("scrubLbl").textContent = `msg ${fmtInt(idx)} / ${fmtInt(D.messages.length - 1)}${undrawn ? ` · ${fmtInt(undrawn)} not animated` : ""}`;
+}
+function advanceTo(newIdx) {
+  const tape = $("tape"); let spawned = 0;
+  for (let i = idx + 1; i <= newIdx; i++) {
+    const ok = spawned < 6; if (ok) spawned++; else undrawn++;
+    process(i, ok);
+  }
+  if (newIdx > idx) {
+    if (newIdx - idx > 14) rebuildTape(newIdx);
+    else for (let i = idx + 1; i <= newIdx; i++) { tape.insertBefore(tapeRow(i), tape.firstChild); while (tape.children.length > 14) tape.lastChild.remove(); }
+    idx = newIdx;
+  }
+}
+function frame(now) {
+  rejBudget = 1;
+  const dt = lastFrame ? Math.min(100, now - lastFrame) : 16; lastFrame = now;
+  if (playing && D && D.messages.length) {
+    clock += dt * 1e6 * speed;
+    let j = idx;
+    if ($("skipGaps").checked && j + 1 < T.length && (T[j + 1] - clock) / (1e6 * speed) > 900) clock = T[j + 1] - 200e6 * speed;
+    while (j + 1 < T.length && T[j + 1] <= clock) j++;
+    if (j !== idx) advanceTo(j);
+    if (idx >= T.length - 1) setPlaying(false);
+    renderAll(true);
+  }
+  if (tipId && playing) { const lv = tipEl.querySelector(".live"); const t = liveLine(tipId); if (lv && t) lv.textContent = t; }
+  stepParticles(now);
+  stepHeat(dt);
+  requestAnimationFrame(frame);
+}
+function setPlaying(p) { playing = p; $("btnPlay").textContent = p ? "Pause" : "Play"; }
+
+$("btnPlay").addEventListener("click", () => { if (!D) return; if (idx >= T.length - 1) seek(0); setPlaying(!playing); });
+$("btnFwd").addEventListener("click", () => { if (!D) return; setPlaying(false); if (idx < T.length - 1) { advanceTo(idx + 1); clock = T[idx]; renderAll(true); } });
+$("btnBack").addEventListener("click", () => { if (!D) return; setPlaying(false); seek(idx - 1); });
+$("speed").addEventListener("change", e => { speed = parseFloat(e.target.value) || 0.01; });
+$("ordFilter").addEventListener("change", () => { if (D) rebuildOrders(idx); });
+$("scrub").addEventListener("input", e => { if (!D) return; seek(parseInt(e.target.value, 10) || 0); });
+document.addEventListener("keydown", e => {
+  if (!D || e.target.closest("input,select,button,[role=button]")) return;
+  if (e.key === " ") { e.preventDefault(); $("btnPlay").click(); }
+  else if (e.key === "ArrowRight") $("btnFwd").click();
+  else if (e.key === "ArrowLeft") $("btnBack").click();
+});
+load();
+})();
+</script>
+</html>
