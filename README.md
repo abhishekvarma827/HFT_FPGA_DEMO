@@ -3,7 +3,7 @@
 **Live demo:** https://YOUR-GITHUB-USERNAME.github.io/hft-fpga-demo/
 **60-second video:** [demo.mp4](demo.mp4)
 
-A complete tick-to-trade pipeline in SystemVerilog for the Xilinx Kria KR260 (UltraScale+):
+A complete tick-to-trade pipeline in SystemVerilog for the AMD Kria KR260 (K26 UltraScale+):
 10G XGMII MAC → UDP/IPv4 → MoldUDP64 A/B feed handling with hardware gap re-request →
 ITCH 5.0 parser → order book (196,608 orders in UltraRAM) → strategies → pre-trade risk →
 OUCH 4.2 → SoupBinTCP over a hardware TCP client.
@@ -13,10 +13,25 @@ TotalView-ITCH 5.0 public sample) through the pipeline, with each stage's measur
 
 | Metric | Value |
 |---|---|
-| Core tick-to-trade (first ITCH byte to decision) | 70 ns |
-| Wire to wire (KR260 path, 64-bit order datapath) | 678 ns |
+| Wire to wire (XGMII in → order out, idle, median / max) | 294.4 ns / 371.2 ns |
+| Wire to wire at full 10G line rate (median) | 344 ns |
+| First ITCH byte → risk-approved decision | 75 ns |
 | Order book capacity | 196,608 orders |
-| Clock domains | 156.25 / 250 / 100 MHz |
+| Clock domains | 156.25 / 200 / 100 MHz |
+| Timing on the real K26 (full board build) | met at 200 MHz, 0 failing endpoints |
 
-Timings are from cycle-accurate RTL simulation replaying real NASDAQ data. Vivado synthesis
-and implementation run on a stand-in UltraScale+ part; KR260 board bring-up is in progress.
+Latency comes from cycle-accurate RTL simulation with the board's settings, replaying real NASDAQ
+data. The full KR260 board build (10G PCS, ARM, block design) meets timing at 200 MHz on the real
+xck26 part. The order book alone has run on the KR260: 4,084,599 real messages, 0 mismatches.
+Running the full system on the board is next.
+
+## Publishing on GitHub Pages
+1. Create a new public repository named `hft-fpga-demo` on GitHub.
+2. Upload every file in this folder (`index.html`, `flow_data.json`, `demo.mp4`, `README.md`, `.nojekyll`).
+3. Repository **Settings → Pages**: Source = "Deploy from a branch", Branch = `main`, folder `/ (root)`, Save.
+4. After about a minute the site is live at `https://YOUR-GITHUB-USERNAME.github.io/hft-fpga-demo/`.
+5. Put that link on the resume and replace YOUR-GITHUB-USERNAME above.
+
+## Previewing locally
+`python3 -m http.server 8777` in this folder, then open http://localhost:8777/
+(opening index.html directly as a file will not load the replay data).
